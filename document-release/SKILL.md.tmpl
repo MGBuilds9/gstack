@@ -131,6 +131,7 @@ Use these definitions:
 
 The coverage map feeds into Steps 2-3 (what to audit and fix) and Step 9 (documentation debt
 summary in the PR body). Do NOT auto-generate missing documentation pages — flag gaps only.
+When significant gaps are found, suggest running `/document-generate` to fill them.
 
 ---
 
@@ -495,8 +496,8 @@ If all coverage is complete and no diagrams drifted, output: "Coverage: all ship
 - **Generic heuristics, not project-specific.** The audit checks work on any repo.
 - **Discoverability matters.** Every doc file should be reachable from README or CLAUDE.md.
 - **Coverage map informs, never generates.** The Diataxis coverage map flags gaps for the PR body
-  and future work. It does NOT auto-generate missing documentation pages or sections. The coverage
-  map is an audit tool, not a content generator.
+  and future work. It does NOT auto-generate missing documentation pages or sections. When gaps
+  are found, suggest `/document-generate` as the follow-up skill.
 - **Diagram drift is advisory.** Flag stale architecture diagrams in the PR body but do not
   auto-edit ASCII art or Mermaid blocks — they require human judgment to update correctly.
 - **Voice: friendly, user-forward, not obscure.** Write like you're explaining to a smart person
