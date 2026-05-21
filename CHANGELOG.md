@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.43.0.0] - 2026-05-21
+## [1.43.2.0] - 2026-05-21
 
 ## **Three flagship workflows stop lying to users: /retro detects stale base before fabricating a narrative, /sync-gbrain resumes from gbrain's checkpoint instead of restarting the 35-min import loop, and /review forces every finding to quote the code line that motivates it.**
 ## **15 community PRs plus the silent-failure trio land in one bundle: 26 bisect commits with regression tests pinning every fix.**
