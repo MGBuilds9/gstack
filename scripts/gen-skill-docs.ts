@@ -16,7 +16,7 @@ import { writeLlmsTxt } from './gen-llms-txt';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Host, TemplateContext } from './resolvers/types';
-import { HOST_PATHS } from './resolvers/types';
+import { HOST_PATHS, unwrapResolver } from './resolvers/types';
 import { RESOLVERS } from './resolvers/index';
 import { externalSkillName, extractHookSafetyProse as _extractHookSafetyProse, extractNameAndDescription as _extractNameAndDescription, condenseOpenAIShortDescription as _condenseOpenAIShortDescription, generateOpenAIYaml as _generateOpenAIYaml } from './resolvers/codex-helpers';
 import { generatePlanCompletionAuditShip, generatePlanCompletionAuditReview, generatePlanVerificationExec } from './resolvers/review';
@@ -441,9 +441,11 @@ function processTemplate(tmplPath: string, host: Host = 'claude'): { outputPath:
     const resolverName = parts[0];
     const args = parts.slice(1);
     if (suppressed.has(resolverName)) return '';
-    const resolver = RESOLVERS[resolverName];
-    if (!resolver) throw new Error(`Unknown placeholder {{${resolverName}}} in ${relTmplPath}`);
-    return args.length > 0 ? resolver(ctx, args) : resolver(ctx);
+    const entry = RESOLVERS[resolverName];
+    if (!entry) throw new Error(`Unknown placeholder {{${resolverName}}} in ${relTmplPath}`);
+    const { resolve, appliesTo } = unwrapResolver(entry);
+    if (appliesTo && !appliesTo(ctx)) return '';
+    return args.length > 0 ? resolve(ctx, args) : resolve(ctx);
   });
 
   // Check for any remaining unresolved placeholders
