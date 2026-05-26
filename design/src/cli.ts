@@ -323,11 +323,17 @@ async function main(): Promise<void> {
  * publish the board, open the browser to its URL, then exit. The daemon
  * survives.
  *
- * Backward-compatible stderr lines for any external script that scraped the
- * old `SERVE_STARTED` output:
- *   - "DAEMON_ATTACHED port=N" or "DAEMON_STARTED port=N" (one or the other)
+ * Stderr lines (in order):
+ *   - "DAEMON_STARTED port=N version=V"  (or "DAEMON_ATTACHED port=N ..."
+ *     if a daemon was already running)
  *   - "BOARD_PUBLISHED: http://127.0.0.1:N/boards/<id>/"
- *   - "BOARD_URL: <same url>" (alias for grep-friendliness)
+ *   - "BOARD_URL: <same url>"  (alias for grep-friendliness)
+ *   - "SERVE_STARTED: port=N html=<path>"  (legacy back-compat alias for
+ *     any external script that scraped the pre-daemon output — note the
+ *     daemon hosts boards under /boards/<id>/, not /, so scripts that
+ *     ALSO POSTed /api/reload at the parsed port need to switch to
+ *     BOARD_URL + ./api/reload to work end-to-end. Emitting the legacy
+ *     line keeps port-only consumers from breaking outright.)
  */
 async function publishToDaemon(opts: { html: string; title?: string }): Promise<void> {
   if (!opts.html) {
@@ -345,6 +351,10 @@ async function publishToDaemon(opts: { html: string; title?: string }): Promise<
   });
   console.error(`BOARD_PUBLISHED: ${result.url}`);
   console.error(`BOARD_URL: ${result.url}`);
+  // Legacy alias so anything still grepping `SERVE_STARTED: port=` gets the
+  // port. The full back-compat story requires the caller to ALSO learn the
+  // per-board path; see publishToDaemon docstring above.
+  console.error(`SERVE_STARTED: port=${ensured.port} html=${opts.html}`);
   console.log(JSON.stringify({ id: result.id, url: result.url, sourceDir: result.sourceDir }, null, 2));
   openBrowser(result.url);
   // Short-lived publisher process exits; daemon keeps serving.

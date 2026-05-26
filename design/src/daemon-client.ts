@@ -33,7 +33,6 @@ import { setTimeout as delay } from "timers/promises";
 import {
   acquireLock,
   CMDLINE_MARKER,
-  DaemonState,
   healthCheck,
   isProcessAlive,
   readStateFile,
