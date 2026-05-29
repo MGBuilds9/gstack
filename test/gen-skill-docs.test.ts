@@ -327,10 +327,13 @@ describe('gen-skill-docs', () => {
     // resolver gained the <gstack-qid:...> marker convention + the
     // (recommended) label requirement (D2 + D18 — both load-bearing for
     // hook enforcement). Adds ~700 bytes.
+    // Ratcheted 40000 → 60000 in v1.52.0.0 cap audit: ~20K headroom so
+    // future preamble adds don't trip the gate on each PR. Real runaway
+    // (preamble doubling) still trips; normal scope growth doesn't.
     for (const skill of reviewSkills) {
       const content = fs.readFileSync(skill.path, 'utf-8');
       const preamble = extractPreambleBeforeWorkflow(content, skill.markers);
-      expect(Buffer.byteLength(preamble, 'utf-8')).toBeLessThan(40_000);
+      expect(Buffer.byteLength(preamble, 'utf-8')).toBeLessThan(60_000);
     }
   });
 

@@ -13,8 +13,11 @@
 #   gstack-distill-free-text --dry-run             # show prompt, no API call
 #   gstack-distill-free-text --status              # show last-run stats
 #
-# Per D7 cathedral cap: max 3 distills/day per slug. Cumulative cost log
-# appended to $GSTACK_STATE_ROOT/distill-cost.jsonl.
+# No rate cap — the natural rate of free-text events (rare; user has to type
+# "Other" then content) bounds this loop already. Each Haiku call is ~$0.01,
+# so even a runaway at one-per-minute would be ~$14/day worst case. The
+# cumulative cost log at $GSTACK_STATE_ROOT/distill-cost.jsonl gives full
+# auditability via --status when you want it.
 # Per D6: Anthropic SDK direct call, fail-loud on missing ANTHROPIC_API_KEY.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -55,8 +58,9 @@ if [ "$MODE" = "status" ]; then
     const totalUsd = mine.reduce((a, e) => a + (e.cost_usd_est || 0), 0);
     const todayIso = new Date().toISOString().slice(0, 10);
     const today = mine.filter((e) => (e.ts || "").startsWith(todayIso));
+    const todayUsd = today.reduce((a, e) => a + (e.cost_usd_est || 0), 0);
     console.log("RUNS: " + mine.length);
-    console.log("TODAY: " + today.length + " / 3");
+    console.log("TODAY: " + today.length + " run(s), $" + todayUsd.toFixed(4));
     console.log("ESTIMATED_TOTAL_USD: $" + totalUsd.toFixed(4));
     const last = mine[mine.length - 1];
     console.log("LAST_RUN: " + (last.ts || "?") + " | " + (last.proposals_count || 0) + " proposals");
@@ -72,26 +76,8 @@ if [ "$MODE" = "background" ]; then
   exit 0
 fi
 
-# --- Rate cap check (D7: max 3/day per slug) ---------------------------
-
-DAILY_COUNT=$(COST_LOG_PATH="$COST_LOG" SLUG_PATH="$SLUG" bun -e '
-  const fs = require("fs");
-  const slug = process.env.SLUG_PATH;
-  const path = process.env.COST_LOG_PATH;
-  if (!fs.existsSync(path)) { console.log("0"); process.exit(0); }
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const lines = fs.readFileSync(path, "utf-8").trim().split("\n").filter(Boolean);
-  const n = lines
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-    .filter((e) => e && e.slug === slug && (e.ts || "").startsWith(todayIso))
-    .length;
-  console.log(String(n));
-')
-
-if [ "$DAILY_COUNT" -ge 3 ] 2>/dev/null; then
-  echo "RATE_CAPPED: $DAILY_COUNT distills today (3/day limit). Use --status for run history."
-  exit 0
-fi
+# No rate cap. Natural input rate (free-text events are rare) + Haiku price
+# (~$0.01/run) keep this bounded. Use --status to audit spend.
 
 # --- Gather unprocessed auq-other events from this project -------------
 

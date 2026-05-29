@@ -104,44 +104,22 @@ describe('--status', () => {
     const r = run(['--status']);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('RUNS: 2');
-    expect(r.stdout).toContain('TODAY: 2 / 3');
+    expect(r.stdout).toMatch(/TODAY: 2 run\(s\)/);
   });
 });
 
 // ----------------------------------------------------------------------
-// Rate cap (D7)
+// No rate cap (v1.52.0.0 cap audit) — the natural rate of free-text events
+// is rare enough that count-based capping was theatrical. Cost log alone
+// provides auditability via --status.
 // ----------------------------------------------------------------------
 
-describe('rate cap (3/day per slug)', () => {
-  test('exits with RATE_CAPPED when 3 runs already logged today', () => {
+describe('no rate cap (audit removed)', () => {
+  test('never exits with RATE_CAPPED, even with many runs today', () => {
     const today = new Date().toISOString();
-    writeCostLogEntry(cwdSlug, today);
-    writeCostLogEntry(cwdSlug, today);
-    writeCostLogEntry(cwdSlug, today);
+    for (let i = 0; i < 10; i++) writeCostLogEntry(cwdSlug, today);
     const r = run([]);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/RATE_CAPPED/);
-  });
-
-  test('yesterday runs do not count against today cap', () => {
-    const today = new Date().toISOString();
-    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-    writeCostLogEntry(cwdSlug, yesterday);
-    writeCostLogEntry(cwdSlug, yesterday);
-    writeCostLogEntry(cwdSlug, yesterday);
-    writeCostLogEntry(cwdSlug, today);
-    const r = run([]);
-    // Not capped — proceeds past the cap check; will hit NO_LOG next.
-    expect(r.status).toBe(0);
-    expect(r.stdout).not.toMatch(/RATE_CAPPED/);
-  });
-
-  test('other slugs in cost log do not count against this slug', () => {
-    const today = new Date().toISOString();
-    writeCostLogEntry('other-slug', today);
-    writeCostLogEntry('other-slug', today);
-    writeCostLogEntry('other-slug', today);
-    const r = run([]);
     expect(r.stdout).not.toMatch(/RATE_CAPPED/);
   });
 });
