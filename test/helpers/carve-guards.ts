@@ -192,6 +192,23 @@ export const CARVE_GUARDS: Record<string, CarveGuard> = {
     minUnionBytes: 70_000,
     mustContain: ['design doc', 'problem statement'],
   },
+  'document-release': {
+    skill: 'document-release',
+    expectedSections: ['release-body.md'],
+    requiredReads: ['release-body.md'],
+    scenario:
+      'A PR has shipped a new CLI flag and touched README.md and CHANGELOG.md. Skip the git pre-flight shell commands (assume the diff adds --new-flag and updates those two docs). Run the documentation workflow: build the coverage map, then audit the docs, apply updates, and polish the CHANGELOG voice. Produce the documentation health summary.',
+    staticInvariants: {
+      mustStayInSkeleton: ['## Step 1: Pre-flight', '## Step 1.5: Coverage Map'],
+      mustMoveToSection: ['## Step 2: Per-File Documentation Audit', '## Step 5: CHANGELOG Voice Polish'],
+      // Operational skill (no plan-mode review gate).
+      gateAfterStop: undefined,
+    },
+    behavioral: 'prompt',
+    maxSkeletonBytes: 50_000,
+    minUnionBytes: 55_000,
+    mustContain: ['CHANGELOG', 'Diataxis', 'coverage'],
+  },
 };
 
 /** Sorted carved-skill names. Consumers derive their lists from this — no parallel lists. */
