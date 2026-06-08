@@ -269,6 +269,27 @@ describe("oversize fails CLOSED", () => {
     expect(r.findings[0].id).toBe("engine.input_too_large");
     expect(exitCodeFor(r)).toBe(3);
   });
+
+  // #1824: a malformed --max-bytes used to reach the engine as NaN. `byteLen >
+  // NaN` is always false, silently disabling the fail-closed guard. The engine
+  // guardrail must fall back to the default cap for any non-finite / <= 0 value.
+  test("NaN maxBytes falls back to the default cap (does NOT disable the guard)", () => {
+    const big = "a".repeat(2 * 1024 * 1024); // > 1 MiB default cap
+    const r = scan(big, { maxBytes: NaN });
+    expect(r.oversize).toBe(true);
+    expect(r.findings[0].id).toBe("engine.input_too_large");
+    expect(exitCodeFor(r)).toBe(3);
+  });
+
+  test("negative / zero maxBytes falls back to the default cap", () => {
+    // negative would make `byteLen > -5` always true (block everything);
+    // the guardrail normalizes it to the default instead.
+    const small = "ok";
+    expect(scan(small, { maxBytes: -5 }).oversize).toBeFalsy();
+    expect(scan(small, { maxBytes: 0 }).oversize).toBeFalsy();
+    const big = "a".repeat(2 * 1024 * 1024);
+    expect(scan(big, { maxBytes: -5 }).oversize).toBe(true);
+  });
 });
 
 describe("validators", () => {
