@@ -80,6 +80,14 @@ fi
 _ROUTING_DECLINED=$($GSTACK_BIN/gstack-config get routing_declined 2>/dev/null || echo "false")
 echo "HAS_ROUTING: $_HAS_ROUTING"
 echo "ROUTING_DECLINED: $_ROUTING_DECLINED"
+# Vendoring deprecation: detect if CWD has a vendored gstack copy
+_VENDORED="no"
+if [ -d ".agents/skills/gstack" ] && [ ! -L ".agents/skills/gstack" ]; then
+  if [ -f ".agents/skills/gstack/VERSION" ] || [ -d ".agents/skills/gstack/.git" ]; then
+    _VENDORED="yes"
+  fi
+fi
+echo "VENDORED_GSTACK: $_VENDORED"
 # Detect spawned session (OpenClaw or other orchestrator)
 [ -n "$OPENCLAW_SESSION" ] && echo "SPAWNED_SESSION: true" || true
 ```
@@ -207,6 +215,38 @@ If B: run `$GSTACK_BIN/gstack-config set routing_declined true`
 Say "No problem. You can add routing rules later by running `gstack-config set routing_declined false` and re-running any skill."
 
 This only happens once per project. If `HAS_ROUTING` is `yes` or `ROUTING_DECLINED` is `true`, skip this entirely.
+
+If `VENDORED_GSTACK` is `yes`: This project has a vendored copy of gstack at
+`.agents/skills/gstack/`. Vendoring is deprecated. We will not keep vendored copies
+up to date, so this project's gstack will fall behind.
+
+Use AskUserQuestion (one-time per project, check for `~/.gstack/.vendoring-warned-$SLUG` marker):
+
+> This project has gstack vendored in `.agents/skills/gstack/`. Vendoring is deprecated.
+> We won't keep this copy up to date, so you'll fall behind on new features and fixes.
+>
+> Want to migrate to team mode? It takes about 30 seconds.
+
+Options:
+- A) Yes, migrate to team mode now
+- B) No, I'll handle it myself
+
+If A:
+1. Run `git rm -r .agents/skills/gstack/`
+2. Run `echo '.agents/skills/gstack/' >> .gitignore`
+3. Run `$GSTACK_BIN/gstack-team-init required` (or `optional`)
+4. Run `git add .claude/ .gitignore CLAUDE.md && git commit -m "chore: migrate gstack from vendored to team mode"`
+5. Tell the user: "Done. Each developer now runs: `cd $GSTACK_ROOT && ./setup --team`"
+
+If B: say "OK, you're on your own to keep the vendored copy up to date."
+
+Always run (regardless of choice):
+```bash
+eval "$($GSTACK_BIN/gstack-slug 2>/dev/null)" 2>/dev/null || true
+touch ~/.gstack/.vendoring-warned-${SLUG:-unknown}
+```
+
+This only happens once per project. If the marker file exists, skip entirely.
 
 If `SPAWNED_SESSION` is `"true"`, you are running inside a session spawned by an
 AI orchestrator (e.g., OpenClaw). In spawned sessions:
@@ -549,7 +589,7 @@ branch name wherever the instructions say "the base branch" or `<default>`.
 
 # Ship: Fully Automated Ship Workflow
 
-You are running the `/ship` workflow. This is a **non-interactive, fully automated** workflow. Do NOT ask for confirmation at any step. The user said `/ship` which means DO IT. Run straight through and output the PR URL at the end.
+**Non-interactive, fully automated.** Run straight through and output the PR URL at the end.
 
 **Only stop for:**
 - On the base branch (abort)
@@ -566,33 +606,25 @@ You are running the `/ship` workflow. This is a **non-interactive, fully automat
 
 **Never stop for:**
 - Uncommitted changes (always include them)
-- Version bump choice (auto-pick MICRO or PATCH — see Step 4)
+- Version bump choice (auto-pick MICRO or PATCH)
 - CHANGELOG content (auto-generate from diff)
 - Commit message approval (auto-commit)
 - Multi-file changesets (auto-split into bisectable commits)
 - TODOS.md completed-item detection (auto-mark)
 - Auto-fixable review findings (dead code, N+1, stale comments — fixed automatically)
-- Test coverage gaps within target threshold (auto-generate and commit, or flag in PR body)
+- Test coverage gaps within threshold (auto-generate and commit, or flag in PR body)
 
-**Re-run behavior (idempotency):**
-Re-running `/ship` means "run the whole checklist again." Every verification step
-(tests, coverage audit, plan completion, pre-landing review, adversarial review,
-VERSION/CHANGELOG check, TODOS, document-release) runs on every invocation.
-Only *actions* are idempotent:
-- Step 4: If VERSION already bumped, skip the bump but still read the version
-- Step 7: If already pushed, skip the push command
-- Step 8: If PR exists, update the body instead of creating a new PR
-Never skip a verification step because a prior `/ship` run already performed it.
+**Re-run behavior (idempotency):** All verification steps run on every invocation. Only *actions* are idempotent: Step 4: skip bump if already bumped but read VERSION; Step 7: skip push if already pushed; Step 8: update PR body instead of creating new. Never skip a verification step because a prior run performed it.
 
 ---
 
 ## Step 1: Pre-flight
 
-1. Check the current branch. If on the base branch or the repo's default branch, **abort**: "You're on the base branch. Ship from a feature branch."
+1. If on the base branch, **abort**: "You're on the base branch. Ship from a feature branch."
 
-2. Run `git status` (never use `-uall`). Uncommitted changes are always included — no need to ask.
+2. Run `git status` (never use `-uall`). Uncommitted changes always included.
 
-3. Run `git diff <base>...HEAD --stat` and `git log <base>..HEAD --oneline` to understand what's being shipped.
+3. Run `git diff <base>...HEAD --stat` and `git log <base>..HEAD --oneline`.
 
 4. Check review readiness:
 
@@ -691,15 +723,11 @@ service with existing deployment — verify that a distribution pipeline exists.
 
 ## Step 2: Merge the base branch (BEFORE tests)
 
-Fetch and merge the base branch into the feature branch so tests run against the merged state:
-
 ```bash
 git fetch origin <base> && git merge origin/<base> --no-edit
 ```
 
-**If there are merge conflicts:** Try to auto-resolve if they are simple (VERSION, schema.rb, CHANGELOG ordering). If conflicts are complex or ambiguous, **STOP** and show them.
-
-**If already up to date:** Continue silently.
+**Merge conflicts:** Auto-resolve simple ones (VERSION, schema.rb, CHANGELOG ordering). Complex/ambiguous → **STOP** and show them. Already up to date → continue silently.
 
 ---
 
@@ -863,19 +891,13 @@ Only commit if there are changes. Stage all bootstrap files (config, test direct
 
 ## Step 3: Run tests (on merged code)
 
-**Do NOT run `RAILS_ENV=test bin/rails db:migrate`** — `bin/test-lane` already calls
-`db:test:prepare` internally, which loads the schema into the correct lane database.
-Running bare test migrations without INSTANCE hits an orphan DB and corrupts structure.sql.
-
-Run both test suites in parallel:
+**Do NOT run `RAILS_ENV=test bin/rails db:migrate`** — `bin/test-lane` calls `db:test:prepare` internally. Running bare migrations hits an orphan DB and corrupts structure.sql.
 
 ```bash
 bin/test-lane 2>&1 | tee /tmp/ship_tests.txt &
 npm run test 2>&1 | tee /tmp/ship_vitest.txt &
 wait
 ```
-
-After both complete, read the output files and check pass/fail.
 
 **If any test fails:** Do NOT immediately stop. Apply the Test Failure Ownership Triage:
 
@@ -983,23 +1005,21 @@ Use AskUserQuestion:
 - Continue with the workflow.
 - Note in output: "Pre-existing test failure skipped: <test-name>"
 
-**After triage:** If any in-branch failures remain unfixed, **STOP**. Do not proceed. If all failures were pre-existing and handled (fixed, TODOed, assigned, or skipped), continue to Step 3.25.
-
-**If all pass:** Continue silently — just note the counts briefly.
+**After triage:** In-branch failures unfixed → **STOP**. All pre-existing and handled → continue to Step 3.25. All pass → note counts briefly, continue.
 
 ---
 
 ## Step 3.25: Eval Suites (conditional)
 
-Evals are mandatory when prompt-related files change. Skip this step entirely if no prompt files are in the diff.
+Skip entirely if no prompt files are in the diff.
 
-**1. Check if the diff touches prompt-related files:**
+**1. Check for prompt-related files:**
 
 ```bash
 git diff origin/<base> --name-only
 ```
 
-Match against these patterns (from CLAUDE.md):
+Match against patterns from CLAUDE.md:
 - `app/services/*_prompt_builder.rb`
 - `app/services/*_generation_service.rb`, `*_writer_service.rb`, `*_designer_service.rb`
 - `app/services/*_evaluator.rb`, `*_scorer.rb`, `*_classifier_service.rb`, `*_analyzer.rb`
@@ -1008,11 +1028,11 @@ Match against these patterns (from CLAUDE.md):
 - `config/system_prompts/*.txt`
 - `test/evals/**/*` (eval infrastructure changes affect all suites)
 
-**If no matches:** Print "No prompt-related files changed — skipping evals." and continue to Step 3.5.
+**No matches:** Print "No prompt-related files changed — skipping evals." Continue to Step 3.5.
 
 **2. Identify affected eval suites:**
 
-Each eval runner (`test/evals/*_eval_runner.rb`) declares `PROMPT_SOURCE_FILES` listing which source files affect it. Grep these to find which suites match the changed files:
+Each eval runner (`test/evals/*_eval_runner.rb`) declares `PROMPT_SOURCE_FILES`. Grep to find matching suites:
 
 ```bash
 grep -l "changed_file_basename" test/evals/*_eval_runner.rb
@@ -1021,26 +1041,21 @@ grep -l "changed_file_basename" test/evals/*_eval_runner.rb
 Map runner → test file: `post_generation_eval_runner.rb` → `post_generation_eval_test.rb`.
 
 **Special cases:**
-- Changes to `test/evals/judges/*.rb`, `test/evals/support/*.rb`, or `test/evals/fixtures/` affect ALL suites that use those judges/support files. Check imports in the eval test files to determine which.
-- Changes to `config/system_prompts/*.txt` — grep eval runners for the prompt filename to find affected suites.
-- If unsure which suites are affected, run ALL suites that could plausibly be impacted. Over-testing is better than missing a regression.
+- `test/evals/judges/*.rb`, `support/*.rb`, or `fixtures/` changes affect ALL suites using them.
+- `config/system_prompts/*.txt` — grep runners for the prompt filename.
+- When unsure, run all plausibly impacted suites. Over-testing > missing a regression.
 
 **3. Run affected suites at `EVAL_JUDGE_TIER=full`:**
-
-`/ship` is a pre-merge gate, so always use full tier (Sonnet structural + Opus persona judges).
 
 ```bash
 EVAL_JUDGE_TIER=full EVAL_VERBOSE=1 bin/test-lane --eval test/evals/<suite>_eval_test.rb 2>&1 | tee /tmp/ship_evals.txt
 ```
 
-If multiple suites need to run, run them sequentially (each needs a test lane). If the first suite fails, stop immediately — don't burn API cost on remaining suites.
+Run sequentially (each needs a test lane). First failure → stop immediately — don't burn API cost on remaining suites.
 
-**4. Check results:**
+**4.** Eval fails → show failures + cost dashboard → **STOP**. All pass → note counts + cost, continue to Step 3.5.
 
-- **If any eval fails:** Show the failures, the cost dashboard, and **STOP**. Do not proceed.
-- **If all pass:** Note pass counts and cost. Continue to Step 3.5.
-
-**5. Save eval output** — include eval results and cost dashboard in the PR body (Step 8).
+**5. Save eval output** — include in PR body (Step 8).
 
 **Tier reference (for context — /ship always uses `full`):**
 | Tier | When | Speed (cached) | Cost |
@@ -1542,13 +1557,11 @@ Before reviewing code quality, check: **did they build what was requested — no
 
 ## Step 3.5: Pre-Landing Review
 
-Review the diff for structural issues that tests don't catch.
+1. Read `.agents/skills/gstack/review/checklist.md`. Unreadable → **STOP**.
 
-1. Read `.agents/skills/gstack/review/checklist.md`. If the file cannot be read, **STOP** and report the error.
+2. `git diff origin/<base>` — full diff against freshly-fetched base.
 
-2. Run `git diff origin/<base>` to get the full diff (scoped to feature changes against the freshly-fetched base branch).
-
-3. Apply the review checklist in two passes:
+3. Apply checklist in two passes:
    - **Pass 1 (CRITICAL):** SQL & Data Safety, LLM Output Trust Boundary
    - **Pass 2 (INFORMATIONAL):** All remaining categories
 
@@ -1648,76 +1661,48 @@ If no prior reviews exist or none have a `findings` array, skip this step silent
 
 Output a summary header: `Pre-Landing Review: N issues (X critical, Y informational)`
 
-4. **Classify each finding from both the checklist pass and specialist review (Step 3.55-3.56) as AUTO-FIX or ASK** per the Fix-First Heuristic in
-   checklist.md. Critical findings lean toward ASK; informational lean toward AUTO-FIX.
+4. **Classify** each finding as AUTO-FIX or ASK per the Fix-First Heuristic in checklist.md. Critical → ASK; informational → AUTO-FIX.
 
-5. **Auto-fix all AUTO-FIX items.** Apply each fix. Output one line per fix:
-   `[AUTO-FIXED] [file:line] Problem → what you did`
+5. **Auto-fix all AUTO-FIX items.** One line per fix: `[AUTO-FIXED] [file:line] Problem → what you did`
 
-6. **If ASK items remain,** present them in ONE AskUserQuestion:
-   - List each with number, severity, problem, recommended fix
-   - Per-item options: A) Fix  B) Skip
-   - Overall RECOMMENDATION
-   - If 3 or fewer ASK items, you may use individual AskUserQuestion calls instead
+6. **ASK items:** present in ONE AskUserQuestion (list each with severity + recommended fix; per-item options: A) Fix B) Skip). If ≤3 items, individual calls are fine.
 
-7. **After all fixes (auto + user-approved):**
-   - If ANY fixes were applied: commit fixed files by name (`git add <fixed-files> && git commit -m "fix: pre-landing review fixes"`), then **STOP** and tell the user to run `/ship` again to re-test.
-   - If no fixes applied (all ASK items skipped, or no issues found): continue to Step 4.
+7. **After all fixes:** Any fixes applied → commit by name + **STOP** (re-run `/ship`). No fixes → continue to Step 4.
 
-8. Output summary: `Pre-Landing Review: N issues — M auto-fixed, K asked (J fixed, L skipped)`
+8. Output: `Pre-Landing Review: N issues — M auto-fixed, K asked (J fixed, L skipped)` or `No issues found.`
 
-   If no issues found: `Pre-Landing Review: No issues found.`
-
-9. Persist the review result to the review log:
+9. Persist the review result:
 ```bash
 $GSTACK_ROOT/bin/gstack-review-log '{"skill":"review","timestamp":"TIMESTAMP","status":"STATUS","issues_found":N,"critical":N,"informational":N,"quality_score":SCORE,"specialists":SPECIALISTS_JSON,"findings":FINDINGS_JSON,"commit":"'"$(git rev-parse --short HEAD)"'","via":"ship"}'
 ```
-Substitute TIMESTAMP (ISO 8601), STATUS ("clean" if no issues, "issues_found" otherwise),
-and N values from the summary counts above. The `via:"ship"` distinguishes from standalone `/review` runs.
-- `quality_score` = the PR Quality Score computed in Step 3.56 (e.g., 7.5). If specialists were skipped (small diff), use `10.0`
-- `specialists` = the per-specialist stats object compiled in Step 3.56. Each specialist that was considered gets an entry: `{"dispatched":true/false,"findings":N,"critical":N,"informational":N}` if dispatched, or `{"dispatched":false,"reason":"scope|gated"}` if skipped. Example: `{"testing":{"dispatched":true,"findings":2,"critical":0,"informational":2},"security":{"dispatched":false,"reason":"scope"}}`
-- `findings` = array of per-finding records. For each finding (from checklist pass and specialists), include: `{"fingerprint":"path:line:category","severity":"CRITICAL|INFORMATIONAL","action":"ACTION"}`. ACTION is `"auto-fixed"`, `"fixed"` (user approved), or `"skipped"` (user chose Skip).
+- STATUS: "clean" if no issues, else "issues_found"
+- `quality_score`: PR Quality Score from Step 3.56 (e.g., 7.5); use `10.0` if specialists skipped
+- `specialists`: per-specialist stats from Step 3.56. Dispatched: `{"dispatched":true,"findings":N,"critical":N,"informational":N}`. Skipped: `{"dispatched":false,"reason":"scope|gated"}`
+- `findings`: array of `{"fingerprint":"path:line:category","severity":"CRITICAL|INFORMATIONAL","action":"auto-fixed|fixed|skipped"}`
 
-Save the review output — it goes into the PR body in Step 8.
+Save review output — goes into PR body in Step 8.
 
 ---
 
 ## Step 3.75: Address Greptile review comments (if PR exists)
 
-Read `.agents/skills/gstack/review/greptile-triage.md` and follow the fetch, filter, classify, and **escalation detection** steps.
+Read `.agents/skills/gstack/review/greptile-triage.md` and follow the fetch, filter, classify, and escalation detection steps.
 
-**If no PR exists, `gh` fails, API returns an error, or there are zero Greptile comments:** Skip this step silently. Continue to Step 4.
+No PR / `gh` fails / API error / zero comments → skip silently. Continue to Step 4.
 
-**If Greptile comments are found:**
-
-Include a Greptile summary in your output: `+ N Greptile comments (X valid, Y fixed, Z FP)`
-
-Before replying to any comment, run the **Escalation Detection** algorithm from greptile-triage.md to determine whether to use Tier 1 (friendly) or Tier 2 (firm) reply templates.
+**If comments found:** Output `+ N Greptile comments (X valid, Y fixed, Z FP)`. Run Escalation Detection from greptile-triage.md before replying.
 
 For each classified comment:
 
-**VALID & ACTIONABLE:** Use AskUserQuestion with:
-- The comment (file:line or [top-level] + body summary + permalink URL)
-- `RECOMMENDATION: Choose A because [one-line reason]`
-- Options: A) Fix now, B) Acknowledge and ship anyway, C) It's a false positive
-- If user chooses A: apply the fix, commit the fixed files (`git add <fixed-files> && git commit -m "fix: address Greptile review — <brief description>"`), reply using the **Fix reply template** from greptile-triage.md (include inline diff + explanation), and save to both per-project and global greptile-history (type: fix).
-- If user chooses C: reply using the **False Positive reply template** from greptile-triage.md (include evidence + suggested re-rank), save to both per-project and global greptile-history (type: fp).
+**VALID & ACTIONABLE:** AskUserQuestion: file:line + body summary + permalink. Options: A) Fix now B) Acknowledge and ship C) False positive. Fix: commit files, reply with Fix template + inline diff, save to greptile-history (type: fix). FP: reply with FP template + evidence, save (type: fp).
 
-**VALID BUT ALREADY FIXED:** Reply using the **Already Fixed reply template** from greptile-triage.md — no AskUserQuestion needed:
-- Include what was done and the fixing commit SHA
-- Save to both per-project and global greptile-history (type: already-fixed)
+**VALID BUT ALREADY FIXED:** Reply with Already Fixed template (what was done + commit SHA). Save (type: already-fixed). No AskUserQuestion needed.
 
-**FALSE POSITIVE:** Use AskUserQuestion:
-- Show the comment and why you think it's wrong (file:line or [top-level] + body summary + permalink URL)
-- Options:
-  - A) Reply to Greptile explaining the false positive (recommended if clearly wrong)
-  - B) Fix it anyway (if trivial)
-  - C) Ignore silently
-- If user chooses A: reply using the **False Positive reply template** from greptile-triage.md (include evidence + suggested re-rank), save to both per-project and global greptile-history (type: fp)
+**FALSE POSITIVE:** AskUserQuestion: show comment + reasoning. Options: A) Reply explaining FP (recommended) B) Fix anyway C) Ignore. If A: FP template + evidence, save (type: fp).
 
-**SUPPRESSED:** Skip silently — these are known false positives from previous triage.
+**SUPPRESSED:** Skip silently.
 
-**After all comments are resolved:** If any fixes were applied, the tests from Step 3 are now stale. **Re-run tests** (Step 3) before continuing to Step 4. If no fixes were applied, continue to Step 4.
+**After all comments:** Fixes applied → re-run tests (Step 3) before Step 4. No fixes → continue to Step 4.
 
 ---
 
@@ -1750,32 +1735,27 @@ already knows. A good test: would this insight save time in a future session? If
 
 ## Step 4: Version bump (auto-decide)
 
-**Idempotency check:** Before bumping, compare VERSION against the base branch.
+**Idempotency check:**
 
 ```bash
 BASE_VERSION=$(git show origin/<base>:VERSION 2>/dev/null || echo "0.0.0.0")
 CURRENT_VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0.0")
-echo "BASE: $BASE_VERSION  HEAD: $CURRENT_VERSION"
 if [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then echo "ALREADY_BUMPED"; fi
 ```
 
-If output shows `ALREADY_BUMPED`, VERSION was already bumped on this branch (prior `/ship` run). Skip the bump action (do not modify VERSION), but read the current VERSION value — it is needed for CHANGELOG and PR body. Continue to the next step. Otherwise proceed with the bump.
+`ALREADY_BUMPED` → skip bump, read current VERSION (needed for CHANGELOG + PR body). Otherwise:
 
-1. Read the current `VERSION` file (4-digit format: `MAJOR.MINOR.PATCH.MICRO`)
+1. Read `VERSION` (4-digit: `MAJOR.MINOR.PATCH.MICRO`)
 
-2. **Auto-decide the bump level based on the diff:**
-   - Count lines changed (`git diff origin/<base>...HEAD --stat | tail -1`)
-   - Check for feature signals: new route/page files (e.g. `app/*/page.tsx`, `pages/*.ts`), new DB migration/schema files, new test files alongside new source files, or branch name starting with `feat/`
-   - **MICRO** (4th digit): < 50 lines changed, trivial tweaks, typos, config
-   - **PATCH** (3rd digit): 50+ lines changed, no feature signals detected
-   - **MINOR** (2nd digit): **ASK the user** if ANY feature signal is detected, OR 500+ lines changed, OR new modules/packages added
-   - **MAJOR** (1st digit): **ASK the user** — only for milestones or breaking changes
+2. **Auto-decide bump:**
+   - **MICRO**: < 50 lines, trivial tweaks/typos/config
+   - **PATCH**: 50+ lines, no feature signals
+   - **MINOR**: **ASK** if any feature signal (new route/page/migration/test files alongside source, or `feat/` branch), OR 500+ lines, OR new modules/packages
+   - **MAJOR**: **ASK** — milestones or breaking changes only
 
-3. Compute the new version:
-   - Bumping a digit resets all digits to its right to 0
-   - Example: `0.19.1.0` + PATCH → `0.19.2.0`
+3. Bumping a digit resets all digits to its right to 0. Example: `0.19.1.0` + PATCH → `0.19.2.0`
 
-4. Write the new version to the `VERSION` file.
+4. Write the new version to `VERSION`.
 
 ---
 
@@ -1880,25 +1860,20 @@ Save this summary — it goes into the PR body in Step 8.
 
 ## Step 6: Commit (bisectable chunks)
 
-**Goal:** Create small, logical commits that work well with `git bisect` and help LLMs understand what changed.
+1. Group changes into logical commits (one coherent change per commit, not one file).
 
-1. Analyze the diff and group changes into logical commits. Each commit should represent **one coherent change** — not one file, but one logical unit.
+2. **Ordering** (earlier first):
+   - Infrastructure: migrations, config, routes
+   - Models & services (with tests)
+   - Controllers & views (with tests)
+   - VERSION + CHANGELOG + TODOS.md (always last)
 
-2. **Commit ordering** (earlier commits first):
-   - **Infrastructure:** migrations, config changes, route additions
-   - **Models & services:** new models, services, concerns (with their tests)
-   - **Controllers & views:** controllers, views, JS/React components (with their tests)
-   - **VERSION + CHANGELOG + TODOS.md:** always in the final commit
+3. **Splitting rules:**
+   - Model + test → same commit. Service + test → same commit. Controller + views + test → same commit.
+   - Migrations: own commit or grouped with the model they support.
+   - < 50 lines across < 4 files → single commit is fine.
 
-3. **Rules for splitting:**
-   - A model and its test file go in the same commit
-   - A service and its test file go in the same commit
-   - A controller, its views, and its test go in the same commit
-   - Migrations are their own commit (or grouped with the model they support)
-   - Config/route changes can group with the feature they enable
-   - If the total diff is small (< 50 lines across < 4 files), a single commit is fine
-
-4. **Each commit must be independently valid** — no broken imports, no references to code that doesn't exist yet. Order commits so dependencies come first.
+4. Each commit must be independently valid — no broken imports, dependencies come first.
 
 5. Compose each commit message:
    - First line: `<type>: <summary>` (type = feat/fix/chore/refactor/docs)
@@ -1920,37 +1895,26 @@ EOF
 
 **IRON LAW: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE.**
 
-Before pushing, re-verify if code changed during Steps 4-6:
+1. **Test verification:** If ANY code changed after Step 3 (review fixes — CHANGELOG edits don't count), re-run. Paste fresh output. Stale output is NOT acceptable.
 
-1. **Test verification:** If ANY code changed after Step 3's test run (fixes from review findings, CHANGELOG edits don't count), re-run the test suite. Paste fresh output. Stale output from Step 3 is NOT acceptable.
+2. **Build verification:** If the project has a build step, run it.
 
-2. **Build verification:** If the project has a build step, run it. Paste output.
+3. **No rationalizations:** "Should work now" / "I'm confident" / "tested earlier" / "trivial change" → these are not evidence. Run it.
 
-3. **Rationalization prevention:**
-   - "Should work now" → RUN IT.
-   - "I'm confident" → Confidence is not evidence.
-   - "I already tested earlier" → Code changed since then. Test again.
-   - "It's a trivial change" → Trivial changes break production.
-
-**If tests fail here:** STOP. Do not push. Fix the issue and return to Step 3.
-
-Claiming work is complete without verification is dishonesty, not efficiency.
+Tests fail → STOP, fix, return to Step 3.
 
 ---
 
 ## Step 7: Push
 
-**Idempotency check:** Check if the branch is already pushed and up to date.
-
 ```bash
 git fetch origin <branch-name> 2>/dev/null
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/<branch-name> 2>/dev/null || echo "none")
-echo "LOCAL: $LOCAL  REMOTE: $REMOTE"
 [ "$LOCAL" = "$REMOTE" ] && echo "ALREADY_PUSHED" || echo "PUSH_NEEDED"
 ```
 
-If `ALREADY_PUSHED`, skip the push but continue to Step 8. Otherwise push with upstream tracking:
+`ALREADY_PUSHED` → skip push, continue to Step 8. Otherwise:
 
 ```bash
 git push -u origin <branch-name>
@@ -1960,21 +1924,19 @@ git push -u origin <branch-name>
 
 ## Step 8: Create PR/MR
 
-**Idempotency check:** Check if a PR/MR already exists for this branch.
-
-**If GitHub:**
+**GitHub idempotency check:**
 ```bash
 gh pr view --json url,number,state -q 'if .state == "OPEN" then "PR #\(.number): \(.url)" else "NO_PR" end' 2>/dev/null || echo "NO_PR"
 ```
 
-**If GitLab:**
+**GitLab:**
 ```bash
 glab mr view -F json 2>/dev/null | jq -r 'if .state == "opened" then "MR_EXISTS" else "NO_MR" end' 2>/dev/null || echo "NO_MR"
 ```
 
-If an **open** PR/MR already exists: **update** the PR body using `gh pr edit --body "..."` (GitHub) or `glab mr update -d "..."` (GitLab). Always regenerate the PR body from scratch using this run's fresh results (test output, coverage audit, review findings, adversarial review, TODOS summary). Never reuse stale PR body content from a prior run. Print the existing URL and continue to Step 8.5.
+Open PR/MR exists → **update** body (`gh pr edit --body` / `glab mr update -d`). Always regenerate from this run's fresh results — never reuse stale content. Print URL, continue to Step 8.5.
 
-If no PR/MR exists: create a pull request (GitHub) or merge request (GitLab) using the platform detected in Step 0.
+No PR/MR → create using platform detected in Step 0.
 
 The PR/MR body should contain these sections:
 
@@ -2051,8 +2013,7 @@ EOF
 )"
 ```
 
-**If neither CLI is available:**
-Print the branch name, remote URL, and instruct the user to create the PR/MR manually via the web UI. Do not stop — the code is pushed and ready.
+**No CLI available:** Print branch name + remote URL and instruct the user to create manually. Code is pushed and ready.
 
 **Output the PR/MR URL** — then proceed to Step 8.5.
 
@@ -2060,64 +2021,48 @@ Print the branch name, remote URL, and instruct the user to create the PR/MR man
 
 ## Step 8.5: Auto-invoke /document-release
 
-After the PR is created, automatically sync project documentation. Read the
-`document-release/SKILL.md` skill file (adjacent to this skill's directory) and
-execute its full workflow:
+Automatically sync project docs after PR is created.
 
-1. Read the `/document-release` skill: `cat ${CLAUDE_SKILL_DIR}/../document-release/SKILL.md`
-2. Follow its instructions — it reads all .md files in the project, cross-references
-   the diff, and updates anything that drifted (README, ARCHITECTURE, CONTRIBUTING,
-   CLAUDE.md, TODOS, etc.)
-3. If any docs were updated, commit the changes and push to the same branch:
+1. Read: `cat ${CLAUDE_SKILL_DIR}/../document-release/SKILL.md`
+2. Execute its full workflow — reads all .md files, cross-references the diff, updates drifted docs (README, ARCHITECTURE, CONTRIBUTING, CLAUDE.md, TODOS, etc.)
+3. Docs updated → commit and push:
    ```bash
    git add -A && git commit -m "docs: sync documentation with shipped changes" && git push
    ```
-4. If no docs needed updating, say "Documentation is current — no updates needed."
+4. No updates needed → "Documentation is current."
 
-This step is automatic. Do not ask the user for confirmation. The goal is zero-friction
-doc updates — the user runs `/ship` and documentation stays current without a separate command.
-
-If Step 8.5 created a docs commit, re-edit the PR/MR body to include the latest commit SHA in the summary. This ensures the PR body reflects the truly final state after document-release.
+Automatic — no user confirmation. If docs commit created, re-edit the PR/MR body with the latest SHA.
 
 ---
 
 ## Step 8.75: Persist ship metrics
 
-Log coverage and plan completion data so `/retro` can track trends:
-
 ```bash
 eval "$($GSTACK_ROOT/bin/gstack-slug 2>/dev/null)" && mkdir -p ~/.gstack/projects/$SLUG
-```
-
-Append to `~/.gstack/projects/$SLUG/$BRANCH-reviews.jsonl`:
-
-```bash
 echo '{"skill":"ship","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","coverage_pct":COVERAGE_PCT,"plan_items_total":PLAN_TOTAL,"plan_items_done":PLAN_DONE,"verification_result":"VERIFY_RESULT","version":"VERSION","branch":"BRANCH"}' >> ~/.gstack/projects/$SLUG/$BRANCH-reviews.jsonl
 ```
 
-Substitute from earlier steps:
-- **COVERAGE_PCT**: coverage percentage from Step 3.4 diagram (integer, or -1 if undetermined)
-- **PLAN_TOTAL**: total plan items extracted in Step 3.45 (0 if no plan file)
-- **PLAN_DONE**: count of DONE + CHANGED items from Step 3.45 (0 if no plan file)
+Substitute:
+- **COVERAGE_PCT**: from Step 3.4 (integer, or -1 if undetermined)
+- **PLAN_TOTAL**: from Step 3.45 (0 if no plan file)
+- **PLAN_DONE**: DONE + CHANGED items from Step 3.45
 - **VERIFY_RESULT**: "pass", "fail", or "skipped" from Step 3.47
-- **VERSION**: from the VERSION file
-- **BRANCH**: current branch name
+- **VERSION**: from VERSION file; **BRANCH**: current branch
 
-This step is automatic — never skip it, never ask for confirmation.
+Automatic — never skip, never ask.
 
 ---
 
 ## Important Rules
 
-- **Never skip tests.** If tests fail, stop.
-- **Never skip the pre-landing review.** If checklist.md is unreadable, stop.
-- **Never force push.** Use regular `git push` only.
-- **Never ask for trivial confirmations** (e.g., "ready to push?", "create PR?"). DO stop for: version bumps (MINOR/MAJOR), pre-landing review findings (ASK items), and Codex structured review [P1] findings (large diffs only).
-- **Always use the 4-digit version format** from the VERSION file.
-- **Date format in CHANGELOG:** `YYYY-MM-DD`
-- **Split commits for bisectability** — each commit = one logical change.
-- **TODOS.md completion detection must be conservative.** Only mark items as completed when the diff clearly shows the work is done.
-- **Use Greptile reply templates from greptile-triage.md.** Every reply includes evidence (inline diff, code references, re-rank suggestion). Never post vague replies.
-- **Never push without fresh verification evidence.** If code changed after Step 3 tests, re-run before pushing.
-- **Step 3.4 generates coverage tests.** They must pass before committing. Never commit failing tests.
-- **The goal is: user says `/ship`, next thing they see is the review + PR URL + auto-synced docs.**
+- **Never skip tests.** Fail → stop.
+- **Never skip pre-landing review.** Checklist.md unreadable → stop.
+- **Never force push.** Regular `git push` only.
+- **Never ask for trivial confirmations.** Stop only for: MINOR/MAJOR version bumps, ASK review items, Codex [P1] findings (large diffs).
+- **4-digit version format** from VERSION file. **CHANGELOG dates:** `YYYY-MM-DD`.
+- **Split commits for bisectability** — one logical change per commit.
+- **TODOS.md completion detection must be conservative.** Only mark complete when diff clearly shows it.
+- **Greptile replies use templates from greptile-triage.md.** Include evidence. No vague replies.
+- **No fresh verification = no push.** Code changed after Step 3 → re-run before pushing.
+- **Step 3.4 coverage tests must pass** before committing. Never commit failing tests.
+- **Goal: user says `/ship`, next they see is review + PR URL + auto-synced docs.**
