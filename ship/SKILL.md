@@ -1951,11 +1951,11 @@ No PR / `gh` fails / API error / zero comments → skip silently. Continue to St
 
 For each classified comment:
 
-**VALID & ACTIONABLE:** AskUserQuestion: file:line + body summary + permalink. Options: A) Fix now B) Acknowledge and ship C) False positive. Fix: commit files, reply with Fix template + inline diff, save to greptile-history (type: fix). FP: reply with FP template + evidence, save (type: fp).
+**VALID & ACTIONABLE:** AskUserQuestion: file:line + body summary + permalink. Options: A) Fix now B) Acknowledge and ship C) False positive. Fix: commit files, reply with Fix template + inline diff, save to both per-project and global greptile-history (type: fix). FP: reply with FP template + evidence, save to both per-project and global greptile-history (type: fp).
 
-**VALID BUT ALREADY FIXED:** Reply with Already Fixed template (what was done + commit SHA). Save (type: already-fixed). No AskUserQuestion needed.
+**VALID BUT ALREADY FIXED:** Reply with Already Fixed template (what was done + commit SHA). Save to both per-project and global greptile-history (type: already-fixed). No AskUserQuestion needed.
 
-**FALSE POSITIVE:** AskUserQuestion: show comment + reasoning. Options: A) Reply explaining FP (recommended) B) Fix anyway C) Ignore. If A: FP template + evidence, save (type: fp).
+**FALSE POSITIVE:** AskUserQuestion: show comment + reasoning. Options: A) Reply explaining FP (recommended) B) Fix anyway C) Ignore. If A: FP template + evidence, save to both per-project and global greptile-history (type: fp).
 
 **SUPPRESSED:** Skip silently.
 
@@ -2444,5 +2444,5 @@ Automatic — never skip, never ask.
 - **TODOS.md completion detection must be conservative.** Only mark complete when diff clearly shows it.
 - **Greptile replies use templates from greptile-triage.md.** Include evidence. No vague replies.
 - **No fresh verification = no push.** Code changed after Step 3 → re-run before pushing.
-- **Step 3.4 coverage tests must pass** before committing. Never commit failing tests.
+- **Step 3.4 generates coverage tests.** They must pass before committing. Never commit failing tests.
 - **Goal: user says `/ship`, next they see is review + PR URL + auto-synced docs.**
