@@ -1,5 +1,76 @@
 # Changelog
 
+## [1.57.9.0] - 2026-06-09
+
+## **Your gstack checkout stays clean when gbrain is installed.**
+## **Brain-aware skill blocks render to an untracked spot, never into tracked source.**
+
+Before this, finishing a Conductor or dev-workspace setup with gbrain installed
+rewrote 16 planning and review SKILL.md files in place, adding 326 lines of
+brain-aware blocks straight into tracked source. Your working tree came back dirty,
+one stray `git add` away from committing a token regression for everyone who does
+not run gbrain. Now `gen-skill-docs --out-dir` renders the brain-aware variant into
+an untracked per-workspace directory, and `bin/dev-setup` repoints the workspace's
+skill symlinks at it. The dev workspace gets the full gbrain experience (context-load
+and save-to-brain blocks live at runtime), while the tracked SKILL.md files stay
+byte-for-byte canonical. To turn the blocks on across all your projects' Claude
+sessions, `gstack-config gbrain-refresh` now renders them into your global install,
+guarded so it never mutates a symlinked or non-gstack directory.
+
+### The numbers that matter
+
+Structural facts of the change, verifiable from the diff plus `bun run gen:skill-docs`
+(zero drift) and the new behavioral test (`test/gen-skill-docs-out-dir.test.ts`).
+
+| When gbrain is installed | Before | After |
+|---|---|---|
+| Tracked SKILL.md files dirtied by dev-setup | 16 (+326 lines) | 0 |
+| Where brain-aware blocks render in a dev workspace | in-place, tracked source | `.claude/gstack-rendered/`, untracked |
+| Brain-aware blocks across other projects | re-run `./setup` or hand-edit | `gstack-config gbrain-refresh` (idempotent) |
+| "Is gbrain usable" check | per-caller JSON grep, can read stale state | `gstack-gbrain-detect --is-ok` (one live gate) |
+
+The section-path rewrite is surgical: only `~/.claude/skills/gstack/<skill>/sections/`
+references move to the render dir, so `bin/` and `docs/` references still resolve to
+the install.
+
+### What this means for you
+
+If you develop gstack with gbrain on, `git status` is clean again after setup, and
+you can stop fishing brain-block drift out of your commits. After a
+`git reset --hard` deploy of your install, re-run `gstack-config gbrain-refresh` to
+restore the machine-wide blocks (it is idempotent, and the deploy note in CLAUDE.md
+spells this out).
+
+### Itemized changes
+
+#### Added
+- `gen-skill-docs --out-dir <dir>`: render the Claude SKILL.md + sections into a
+  separate directory instead of in place, rewriting only the section-base path so
+  section reads resolve to the render. Default (no flag) output is unchanged.
+- `gstack-gbrain-detect --is-ok`: live-detection exit-code gate (0 iff gbrain is
+  usable), so setup, dev-setup, and gstack-config share one check.
+- `gstack-config gbrain-refresh` now renders brain-aware blocks into the global
+  install (`~/.claude/skills/gstack`), guarded against symlinked or non-gstack
+  targets and self-documenting about the `reset --hard` re-run cycle.
+
+#### Changed
+- `bin/dev-setup` renders the brain-aware variant into `.claude/gstack-rendered`
+  (gitignored) and repoints workspace skill symlinks at it; the worktree stays
+  canonical. `GSTACK_SKIP_GBRAIN_REGEN` is passed inline to the nested setup, never
+  exported.
+- `setup` honors `GSTACK_SKIP_GBRAIN_REGEN` (skips the in-place brain regen on dev
+  trees) and writes detection state to a PID-unique tmp so concurrent workspaces
+  cannot clobber it.
+- `scripts/dev-skill.ts` refreshes the workspace render on template change, only
+  when the render dir already exists.
+- `bin/dev-teardown` removes the untracked render.
+
+#### For contributors
+- New tests: `test/gen-skill-docs-out-dir.test.ts` (behavioral: worktree unchanged,
+  blocks rendered, section paths rewritten), `test/dev-setup-render-isolation.test.ts`
+  and `test/gbrain-refresh-install-render.test.ts` (static tripwires), plus
+  `--is-ok` coverage in `test/gbrain-detect-shape.test.ts`.
+
 ## [1.57.8.0] - 2026-06-09
 
 ## **`browse` is now the one Chromium on the box, for offline rendering too.**
