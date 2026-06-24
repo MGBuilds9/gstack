@@ -15,6 +15,7 @@ const BIN = path.join(ROOT, 'bin', 'gstack-paths');
 // HOME from USERPROFILE at shell startup if HOME is unset/empty, which
 // silently breaks the "HOME unset" test scenarios. Clearing USERPROFILE
 // alongside HOME prevents that auto-population on Windows runners.
+/** Invokes gstack-paths via bash and returns parsed env vars. */
 function run(env: Record<string, string | undefined>): Record<string, string> {
   const result = spawnSync('bash', [BIN], {
     env: { PATH: process.env.PATH, USERPROFILE: '', ...env } as Record<string, string>,
