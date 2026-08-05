@@ -28,6 +28,10 @@ extension/.auth.json
 # xterm assets are vendored from npm at build time; not source-of-truth.
 extension/lib/xterm.js
 extension/lib/xterm.css
+
+# Local tool marker files (empty checkpoint/overlay flags left by feature-prompted tooling)
+.feature-prompted-continuous-checkpoint
+.feature-prompted-model-overlay
 extension/lib/xterm-addon-fit.js
 .gstack-worktrees/
 /tmp/
