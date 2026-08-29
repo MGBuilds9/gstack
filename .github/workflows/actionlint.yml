@@ -1,5 +1,9 @@
 name: Workflow Lint
-on: [push, pull_request]
+on:
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   actionlint:
     runs-on: ubicloud-standard-8
