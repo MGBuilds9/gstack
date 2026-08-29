@@ -1,0 +1,12 @@
+title = "gstack gitleaks config"
+
+# These three files intentionally contain secret-shaped strings used to test
+# and implement the redaction engine (FWT-111). They are fixtures/patterns,
+# not real secrets, and should never be flagged by the secret scanner.
+[allowlist]
+  description = "Redaction engine test fixtures and patterns (intentional secret-shaped strings)"
+  paths = [
+    '''test/redact-engine\.test\.ts''',
+    '''test/telemetry\.test\.ts''',
+    '''lib/redact-patterns\.ts''',
+  ]
